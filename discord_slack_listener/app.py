@@ -295,7 +295,6 @@ def run_supervisor(settings: Settings) -> None:
 
     child: subprocess.Popen | None = None
     restart_count = 0
-    off_hours_alerted = False
     last_update_check = 0.0
     while True:
         try:
@@ -324,18 +323,11 @@ def run_supervisor(settings: Settings) -> None:
                         child.kill()
                         child.wait(timeout=20)
                     child = None
-                if not off_hours_alerted:
-                    slack.notify_degraded(
-                        title="Discord listener paused outside active hours",
-                        detail=active_hours_detail(settings),
-                    )
-                    off_hours_alerted = True
                 sleep_for = min(seconds_until_active(settings), 300)
                 logger.info("Outside active hours; sleeping %.0f seconds", sleep_for)
                 time.sleep(max(1, sleep_for))
                 continue
 
-            off_hours_alerted = False
             if child and child.poll() is None:
                 time.sleep(5)
                 continue
