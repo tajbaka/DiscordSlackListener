@@ -125,7 +125,14 @@ def classify_product_intent(message: DiscordMessage) -> LeadIntent:
 
 FOLLOWUP_CONTEXT_PATTERNS = re.compile(
     r"\b(for both parts|what would help|how much|how long|cost|can you clarify|"
-    r"what do you mean|that query|makes sense|thanks|appreciate)\b",
+    r"what do you mean|that query|makes sense|thanks|thank you|appreciate|"
+    r"got it|i see|that helps)\b",
+    re.I,
+)
+
+SHORT_CONTEXT_REPLY_PATTERNS = re.compile(
+    r"\b(in process|in the process|currently|already|not yet|still deciding|"
+    r"trying to|working on it|yes|yeah|yep|no|nope)\b",
     re.I,
 )
 
@@ -163,14 +170,24 @@ def classify_product_intent_with_context(
     is_followup = bool(FOLLOWUP_CONTEXT_PATTERNS.search(text)) or (
         text.endswith("?") and word_count <= 14
     )
+    is_short_context_reply = (
+        0 < word_count <= 18
+        and bool(SHORT_CONTEXT_REPLY_PATTERNS.search(text))
+        and not NEGATIVE_CONTEXT.search(text)
+    )
+    is_conversational_reply = (
+        is_followup
+        or is_short_context_reply
+        or (0 < word_count <= 8 and text.endswith((".", "!")))
+    )
 
     if (
         best_same_author
         and best_same_author.score >= 6
-        and is_followup
+        and is_conversational_reply
         and not _is_generic_fallback_author(message.author_key)
     ):
-        score = max(current.score, min(best_same_author.score - 1, 8))
+        score = max(6, current.score, min(best_same_author.score - 1, 8))
         areas = current.product_areas or best_same_author.product_areas
         reasons = list(current.reasons if current.level != "none" else ())
         reasons.append("upgraded from recent same-author product-interest context")
@@ -183,14 +200,13 @@ def classify_product_intent_with_context(
 
     if (
         best_channel
-        and best_channel.score >= 8
-        and is_followup
-        and current.score >= 2
+        and best_channel.score >= 6
+        and is_conversational_reply
     ):
-        score = max(current.score, 4)
+        score = max(6, current.score)
         areas = current.product_areas or best_channel.product_areas
-        reasons = list(current.reasons)
-        reasons.append("supported by recent channel product-interest context")
+        reasons = list(current.reasons if current.level != "none" else ())
+        reasons.append("upgraded from active channel product-interest conversation")
         return LeadIntent(
             level=_level_for_score(score),
             score=score,

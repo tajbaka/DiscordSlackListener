@@ -131,3 +131,60 @@ def test_context_upgrades_short_followup_from_same_author() -> None:
     assert intent.level in {"possible", "strong"}
     assert "FedRAMP path/cost" in intent.product_areas
     assert any("same-author" in reason for reason in intent.reasons)
+
+
+def test_context_upgrades_short_status_reply_from_same_author() -> None:
+    previous = same_author_message(
+        "Trying to reconcile CM-12 with where to store GRC evidence like "
+        "Tenable scan results, POA&M data, and document artifacts before they "
+        "are uploaded to the GRC platform as evidence.",
+        "prev",
+    )
+    current = same_author_message("In the process currently", "current")
+
+    intent = classify_product_intent_with_context(
+        current,
+        same_author_messages=(previous,),
+    )
+
+    assert intent.should_notify is True
+    assert "Evidence/package" in intent.product_areas
+    assert any("same-author" in reason for reason in intent.reasons)
+
+
+def test_context_upgrades_thank_you_in_active_channel_conversation() -> None:
+    prior_lead = same_author_message(
+        "Trying to reconcile CM-12 with where to store GRC evidence like "
+        "Tenable scan results, POA&M data, and document artifacts before they "
+        "are uploaded to the GRC platform as evidence.",
+        "lead",
+    )
+    vendor_reply = DiscordMessage(
+        id="vendor",
+        guild_id=prior_lead.guild_id,
+        guild_name=prior_lead.guild_name,
+        channel_id=prior_lead.channel_id,
+        channel_name=prior_lead.channel_name,
+        author_id=None,
+        author_name="Eddy - Boundera",
+        author_key="display:eddy - boundera",
+        author_is_bot=False,
+        content="Are you already FedRAMP Moderate or in the process of it?",
+        jump_url=prior_lead.jump_url,
+        created_at=prior_lead.created_at,
+        attachments=(),
+    )
+    current = same_author_message(
+        "I see, thank you! That was incredibly helpful.",
+        "current",
+    )
+
+    intent = classify_product_intent_with_context(
+        current,
+        same_author_messages=(),
+        channel_messages=(prior_lead, vendor_reply),
+    )
+
+    assert intent.should_notify is True
+    assert "Evidence/package" in intent.product_areas
+    assert any("active channel" in reason for reason in intent.reasons)

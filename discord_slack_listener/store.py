@@ -57,6 +57,18 @@ class MessageStore:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS slack_notification_exclusions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                author_key TEXT NOT NULL DEFAULT '',
+                author_name TEXT NOT NULL DEFAULT '',
+                reason TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
         self._ensure_column("discord_messages", "lead_intent_level", "TEXT")
         self._ensure_column("discord_messages", "author_key", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("discord_messages", "lead_intent_score", "INTEGER")
@@ -79,6 +91,15 @@ class MessageStore:
             "CREATE INDEX IF NOT EXISTS idx_discord_messages_lead_intent "
             "ON discord_messages(lead_intent_score, lead_intent_level)"
         )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_slack_notification_exclusions_author_key "
+            "ON slack_notification_exclusions(author_key, active)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_slack_notification_exclusions_author_name "
+            "ON slack_notification_exclusions(author_name, active)"
+        )
+        self._ensure_default_slack_notification_exclusions()
         self.conn.commit()
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
@@ -88,6 +109,30 @@ class MessageStore:
         }
         if column not in columns:
             self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _ensure_default_slack_notification_exclusions(self) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO slack_notification_exclusions (
+                author_key, author_name, reason, active, created_at
+            )
+            SELECT ?, ?, ?, 1, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM slack_notification_exclusions
+                WHERE active = 1
+                  AND author_key = ?
+                  AND lower(author_name) = lower(?)
+            )
+            """,
+            (
+                "display:eddy - boundera",
+                "Eddy - Boundera",
+                "internal Boundera vendor account",
+                _utc_now(),
+                "display:eddy - boundera",
+                "Eddy - Boundera",
+            ),
+        )
 
     def upsert_message(
         self,
@@ -190,6 +235,61 @@ class MessageStore:
             (message_id,),
         ).fetchone()
         return bool(row and row["forwarded_at"])
+
+    def add_slack_notification_exclusion(
+        self,
+        *,
+        author_key: str = "",
+        author_name: str = "",
+        reason: str = "",
+    ) -> None:
+        if not author_key and not author_name:
+            raise ValueError("author_key or author_name is required")
+
+        existing = self.conn.execute(
+            """
+            SELECT id FROM slack_notification_exclusions
+            WHERE active = 1
+              AND author_key = ?
+              AND lower(author_name) = lower(?)
+            LIMIT 1
+            """,
+            (author_key, author_name),
+        ).fetchone()
+        if existing:
+            return
+
+        self.conn.execute(
+            """
+            INSERT INTO slack_notification_exclusions (
+                author_key, author_name, reason, active, created_at
+            ) VALUES (?, ?, ?, 1, ?)
+            """,
+            (author_key, author_name, reason, _utc_now()),
+        )
+        self.conn.commit()
+
+    def slack_notification_exclusion_reason(
+        self,
+        message: DiscordMessage,
+    ) -> str | None:
+        row = self.conn.execute(
+            """
+            SELECT author_key, author_name, reason
+            FROM slack_notification_exclusions
+            WHERE active = 1
+              AND (
+                (author_key != '' AND author_key = ?)
+                OR (author_name != '' AND lower(author_name) = lower(?))
+              )
+            ORDER BY id ASC
+            LIMIT 1
+            """,
+            (message.author_key, message.author_name),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["reason"] or "author excluded from Slack notifications")
 
     def mark_forwarded(self, message_id: str, reason: str) -> None:
         self.conn.execute(

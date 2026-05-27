@@ -46,6 +46,30 @@ def test_store_tracks_forwarded_state(tmp_path) -> None:
     assert store.has_been_forwarded("42") is True
 
 
+def test_store_seeds_eddy_slack_notification_exclusion(tmp_path) -> None:
+    store = MessageStore(tmp_path / "messages.sqlite3")
+    msg = DiscordMessage(
+        id="eddy",
+        guild_id=123,
+        guild_name="Discord",
+        channel_id=456,
+        channel_name="fedramp",
+        author_id=None,
+        author_name="Eddy - Boundera",
+        author_key="display:eddy - boundera",
+        author_is_bot=False,
+        content="FedRAMP question",
+        jump_url="https://discord.com/channels/123/456/eddy",
+        created_at=datetime.now(timezone.utc),
+        attachments=(),
+    )
+
+    assert (
+        store.slack_notification_exclusion_reason(msg)
+        == "internal Boundera vendor account"
+    )
+
+
 def test_store_fetches_recent_same_author_messages(tmp_path) -> None:
     store = MessageStore(tmp_path / "messages.sqlite3")
     store.upsert_message(message("1", "first"))
@@ -59,3 +83,40 @@ def test_store_fetches_recent_same_author_messages(tmp_path) -> None:
 
     assert [m.id for m in recent] == ["1", "2"]
     assert all(m.author_key == "display:user" for m in recent)
+
+
+def test_store_matches_slack_notification_exclusion_by_author_key(tmp_path) -> None:
+    store = MessageStore(tmp_path / "messages.sqlite3")
+    msg = message("1")
+
+    store.add_slack_notification_exclusion(
+        author_key="display:user",
+        author_name="Someone Else",
+        reason="internal vendor account",
+    )
+
+    assert store.slack_notification_exclusion_reason(msg) == "internal vendor account"
+
+
+def test_store_matches_slack_notification_exclusion_by_author_name(tmp_path) -> None:
+    store = MessageStore(tmp_path / "messages.sqlite3")
+    msg = message("1")
+
+    store.add_slack_notification_exclusion(
+        author_name="USER",
+        reason="internal vendor account",
+    )
+
+    assert store.slack_notification_exclusion_reason(msg) == "internal vendor account"
+
+
+def test_store_returns_no_slack_notification_exclusion_for_other_author(tmp_path) -> None:
+    store = MessageStore(tmp_path / "messages.sqlite3")
+
+    store.add_slack_notification_exclusion(
+        author_key="display:eddy - boundera",
+        author_name="Eddy - Boundera",
+        reason="internal vendor account",
+    )
+
+    assert store.slack_notification_exclusion_reason(message("1")) is None

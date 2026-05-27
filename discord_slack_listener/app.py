@@ -129,20 +129,39 @@ def run_browser_listener(settings: Settings) -> None:
                     logger.debug("Discord message %s already forwarded", message.id)
                     continue
 
-                decision = should_forward_message(message, settings)
-                if not decision.should_forward:
-                    logger.debug("Discord message %s skipped: %s", message.id, decision.reason)
-                    continue
-
-                if not lead_intent.should_notify:
+                exclusion_reason = store.slack_notification_exclusion_reason(message)
+                if exclusion_reason:
                     logger.info(
-                        "Discord message %s matched prefilter but skipped; product-intent %s",
+                        "Discord message %s not forwarded to Slack: %s",
                         message.id,
-                        lead_intent.summary,
+                        exclusion_reason,
                     )
                     continue
 
-                reason = f"qualified product intent after prefilter: {decision.reason}"
+                decision = should_forward_message(message, settings)
+                if not decision.should_forward:
+                    if (
+                        decision.reason == "no content criteria matched"
+                        and lead_intent.should_notify
+                    ):
+                        logger.info(
+                            "Discord message %s bypassed content prefilter; product-intent %s",
+                            message.id,
+                            lead_intent.summary,
+                        )
+                    else:
+                        logger.debug("Discord message %s skipped: %s", message.id, decision.reason)
+                        continue
+
+                if not lead_intent.should_notify:
+                    logger.debug("Discord message %s skipped: %s", message.id, decision.reason)
+                    continue
+
+                reason = (
+                    "qualified product intent after prefilter: "
+                    if decision.should_forward
+                    else "qualified product intent from active conversation: "
+                ) + decision.reason
                 logger.info("Discord message %s matched: %s", message.id, reason)
                 slack.post_message(
                     message,
