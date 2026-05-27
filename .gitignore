@@ -8,3 +8,4 @@ dist/
 build/
 *.egg-info/
 data/
+temp-outreach-messages.txt

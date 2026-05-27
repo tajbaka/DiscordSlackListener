@@ -19,9 +19,10 @@ messages.
 9. Posts matching new messages to a matches Slack webhook.
 10. Posts listener errors, restarts, and stale-session health alerts to ops Slack.
 
-The criteria layer is intentionally small right now: channel/guild allowlists,
-keyword matching, and optional regex matching. Add future business logic in
-`should_forward_message` without changing the Discord client or Slack poster.
+The criteria layer uses channel/guild allowlists and keyword/regex prefilters,
+then requires strong FedRAMP-product intent before posting to the matches
+Slack channel. Add future business logic in `should_forward_message` or
+`lead_intent.py` without changing the Discord client or Slack poster.
 
 ## Setup
 
@@ -38,6 +39,7 @@ Fill in:
 - `SLACK_MATCHES_WEBHOOK_URL` for matched Discord messages
 - `DISCORD_CHANNEL_URL`, or `DISCORD_GUILD_IDS` + `DISCORD_CHANNEL_IDS`
 - optionally `MATCH_KEYWORDS`, `MATCH_REGEX`
+- optionally `IGNORE_AUTHOR_KEYWORDS=Boundera` to suppress internal replies
 
 On first run, log into Discord in the opened Chromium window. The session is
 stored in `BROWSER_PROFILE_DIR`.
@@ -71,6 +73,12 @@ Active hours default to `ACTIVE_START_HOUR=9`, `ACTIVE_END_HOUR=21`, and
 `ACTIVE_TIMEZONE=America/Toronto`. When `daemon` starts, it asks whether to run
 a catch-up backfill first. If no `yes` is entered within 5 seconds, it skips
 backfill and starts the supervisor.
+
+The supervisor also checks the current git upstream every
+`GIT_UPDATE_POLL_SECONDS` seconds, default `300`. If new commits are available,
+it runs `git pull --ff-only`, installs `requirements.txt` changes, posts an ops
+Slack notification, and restarts the listener child. Set
+`GIT_UPDATE_POLL_SECONDS=0` to disable.
 
 ## Backfill
 

@@ -24,6 +24,7 @@ def settings(**overrides) -> Settings:
         "notify_recent_seconds": 120,
         "no_message_alert_seconds": 10800,
         "supervisor_restart_delay_seconds": 30,
+        "git_update_poll_seconds": 300,
         "active_start_hour": 9,
         "active_end_hour": 21,
         "active_timezone": "America/Toronto",
@@ -31,6 +32,7 @@ def settings(**overrides) -> Settings:
         "backfill_scrolls": 200,
         "backfill_settle_seconds": 1.0,
         "ignore_bots": True,
+        "ignore_author_keywords": (),
         "match_keywords": (),
         "match_regex": None,
         "llm_api_key": "",
@@ -74,6 +76,16 @@ def test_ignores_bot_authors_by_default() -> None:
 
     assert decision.should_forward is False
     assert "bot" in decision.reason
+
+
+def test_ignores_configured_author_keywords() -> None:
+    decision = should_forward_message(
+        message(author_name="Eddy - Boundera", content="FedRAMP moderate"),
+        settings(ignore_author_keywords=("Boundera",), match_keywords=("FedRAMP",)),
+    )
+
+    assert decision.should_forward is False
+    assert "author keyword" in decision.reason
 
 
 def test_applies_guild_and_channel_allowlists() -> None:

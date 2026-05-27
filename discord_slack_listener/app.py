@@ -134,13 +134,22 @@ def run_browser_listener(settings: Settings) -> None:
                     logger.debug("Discord message %s skipped: %s", message.id, decision.reason)
                     continue
 
-                logger.info("Discord message %s matched: %s", message.id, decision.reason)
+                if not lead_intent.should_notify:
+                    logger.info(
+                        "Discord message %s matched prefilter but skipped; product-intent %s",
+                        message.id,
+                        lead_intent.summary,
+                    )
+                    continue
+
+                reason = f"qualified product intent after prefilter: {decision.reason}"
+                logger.info("Discord message %s matched: %s", message.id, reason)
                 slack.post_message(
                     message,
-                    reason=decision.reason,
+                    reason=reason,
                     lead_intent=lead_intent,
                 )
-                store.mark_forwarded(message.id, decision.reason)
+                store.mark_forwarded(message.id, reason)
 
             if settings.no_message_alert_seconds > 0:
                 now = datetime.now(timezone.utc)
@@ -268,8 +277,23 @@ def run_supervisor(settings: Settings) -> None:
     child: subprocess.Popen | None = None
     restart_count = 0
     off_hours_alerted = False
+    last_update_check = 0.0
     while True:
         try:
+            if should_check_for_updates(settings, last_update_check):
+                last_update_check = time.monotonic()
+                if pull_git_update(slack):
+                    if child and child.poll() is None:
+                        logger.info("Stopping Discord listener child after git update")
+                        child.terminate()
+                        try:
+                            child.wait(timeout=20)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("Discord listener child did not terminate; killing")
+                            child.kill()
+                            child.wait(timeout=20)
+                    child = None
+
             if not is_active_now(settings):
                 if child and child.poll() is None:
                     logger.info("Outside active hours; stopping Discord listener child")
@@ -331,6 +355,128 @@ def run_supervisor(settings: Settings) -> None:
                 context={"restart_count": restart_count},
             )
             time.sleep(settings.supervisor_restart_delay_seconds)
+
+
+def should_check_for_updates(settings: Settings, last_update_check: float) -> bool:
+    if settings.git_update_poll_seconds <= 0:
+        return False
+    return (time.monotonic() - last_update_check) >= settings.git_update_poll_seconds
+
+
+def pull_git_update(slack: SlackNotifier) -> bool:
+    """Fast-forward this checkout from its upstream branch.
+
+    Returns True when code changed and the listener child should be restarted.
+    """
+    if not is_git_checkout():
+        return False
+
+    upstream = git_upstream_ref()
+    if upstream is None:
+        logger.debug("No git upstream tracking branch; skipping update check")
+        return False
+
+    fetch = run_git(["fetch"])
+    if fetch.returncode != 0:
+        detail = fetch.stderr.strip() or fetch.stdout.strip()
+        logger.warning("Discord listener git fetch failed: %s", detail)
+        slack.notify_degraded(
+            title="Discord listener git fetch failed",
+            detail=f"```{detail[:2500]}```",
+        )
+        return False
+
+    behind = commits_behind(upstream)
+    if behind == 0:
+        logger.debug("Discord listener up to date with %s", upstream)
+        return False
+
+    before = git_head()
+    logger.warning("Found %d new Discord listener commit(s) on %s; pulling", behind, upstream)
+    pull = run_git(["pull", "--ff-only"])
+    if pull.returncode != 0:
+        detail = pull.stderr.strip() or pull.stdout.strip()
+        logger.warning("Discord listener git pull failed: %s", detail)
+        slack.notify_degraded(
+            title="Discord listener git pull failed",
+            detail=f"```{detail[:2500]}```",
+        )
+        return False
+
+    after = git_head()
+    changed_files = git_changed_files(before, after)
+    if "requirements.txt" in changed_files:
+        install = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"],
+            cwd=str(ROOT_DIR),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if install.returncode != 0:
+            detail = install.stderr.strip() or install.stdout.strip()
+            logger.warning("Discord listener requirements install failed: %s", detail)
+            slack.notify_degraded(
+                title="Discord listener dependency install failed",
+                detail=f"```{detail[:2500]}```",
+            )
+            return False
+
+    logger.warning("Updated Discord listener %s -> %s; restarting child", before[:8], after[:8])
+    slack.notify_degraded(
+        title="Discord listener updated code",
+        detail=f"Pulled {behind} commit(s) from `{upstream}` and restarted the listener child.",
+    )
+    return True
+
+
+def run_git(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(ROOT_DIR),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def is_git_checkout() -> bool:
+    try:
+        result = run_git(["rev-parse", "--is-inside-work-tree"])
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def git_upstream_ref() -> str | None:
+    result = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def commits_behind(upstream: str) -> int:
+    result = run_git(["rev-list", "--count", f"HEAD..{upstream}"])
+    if result.returncode != 0:
+        return 0
+    try:
+        return int(result.stdout.strip() or 0)
+    except ValueError:
+        return 0
+
+
+def git_head() -> str:
+    result = run_git(["rev-parse", "HEAD"])
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def git_changed_files(before: str, after: str) -> set[str]:
+    if not before or not after or before == after:
+        return set()
+    result = run_git(["diff", "--name-only", before, after])
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 def should_run_catchup_prompt(*, timeout_seconds: int) -> bool:

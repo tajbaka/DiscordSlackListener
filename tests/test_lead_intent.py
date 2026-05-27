@@ -96,6 +96,25 @@ def test_catches_ssp_scoping_pain_as_possible() -> None:
     assert "SSP/scoping" in intent.product_areas
 
 
+def test_strong_product_intent_is_required_for_notification() -> None:
+    intent = classify_product_intent(message(
+        "Good morning! Looking at the FedRAMP Authorization Boundary Guidance. "
+        "Trying to reconcile CM-12 with where to store GRC evidence like "
+        "Tenable scan results, POA&M data, and document artifacts before they "
+        "are uploaded to the GRC platform as evidence."
+    ))
+
+    assert intent.should_notify is True
+
+
+def test_general_keyword_reply_is_not_notification_worthy() -> None:
+    intent = classify_product_intent(message(
+        "Are you already FedRAMP moderate or in the process of it?"
+    ))
+
+    assert intent.should_notify is False
+
+
 def test_context_upgrades_short_followup_from_same_author() -> None:
     previous = same_author_message(
         "Is it possible to become FedRAMP equivalent with only 4 employees? "

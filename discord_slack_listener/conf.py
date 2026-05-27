@@ -49,6 +49,7 @@ class Settings:
     notify_recent_seconds: int
     no_message_alert_seconds: int
     supervisor_restart_delay_seconds: int
+    git_update_poll_seconds: int
     active_start_hour: int
     active_end_hour: int
     active_timezone: str
@@ -56,6 +57,7 @@ class Settings:
     backfill_scrolls: int
     backfill_settle_seconds: float
     ignore_bots: bool
+    ignore_author_keywords: tuple[str, ...]
     match_keywords: tuple[str, ...]
     match_regex: Pattern[str] | None
     llm_api_key: str
@@ -105,6 +107,7 @@ def load_settings() -> Settings:
         supervisor_restart_delay_seconds=int(
             os.getenv("SUPERVISOR_RESTART_DELAY_SECONDS", "30") or 30
         ),
+        git_update_poll_seconds=int(os.getenv("GIT_UPDATE_POLL_SECONDS", "300") or 300),
         active_start_hour=int(os.getenv("ACTIVE_START_HOUR", "9") or 9),
         active_end_hour=int(os.getenv("ACTIVE_END_HOUR", "21") or 21),
         active_timezone=os.getenv("ACTIVE_TIMEZONE", "America/Toronto").strip()
@@ -113,6 +116,7 @@ def load_settings() -> Settings:
         backfill_scrolls=int(os.getenv("BACKFILL_SCROLLS", "200") or 200),
         backfill_settle_seconds=float(os.getenv("BACKFILL_SETTLE_SECONDS", "1.0") or 1.0),
         ignore_bots=_truthy(os.getenv("IGNORE_BOTS"), default=True),
+        ignore_author_keywords=_csv_strings(os.getenv("IGNORE_AUTHOR_KEYWORDS")),
         match_keywords=_csv_strings(os.getenv("MATCH_KEYWORDS")),
         match_regex=regex,
         llm_api_key=os.getenv("LLM_API_KEY", "").strip(),

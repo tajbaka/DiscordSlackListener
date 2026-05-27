@@ -16,6 +16,7 @@ Configuration is loaded from `.env` at the project root.
 | `NOTIFY_RECENT_SECONDS` | no | Live listener only Slack-notifies messages this recent relative to startup. |
 | `NO_MESSAGE_ALERT_SECONDS` | no | Ops alert when no new Discord message is stored for this many seconds. Defaults to `10800` (3 hours). |
 | `SUPERVISOR_RESTART_DELAY_SECONDS` | no | Delay before supervised mode restarts after a crash. Defaults to `30`. |
+| `GIT_UPDATE_POLL_SECONDS` | no | Supervisor git fetch/pull interval. Set `0` to disable. Defaults to `300`. |
 | `ACTIVE_START_HOUR` | no | Supervised listener start hour, inclusive. Defaults to `9`. |
 | `ACTIVE_END_HOUR` | no | Supervised listener end hour, exclusive. Defaults to `21`. |
 | `ACTIVE_TIMEZONE` | no | Timezone for active hours. Defaults to `America/Toronto`. |
@@ -24,6 +25,7 @@ Configuration is loaded from `.env` at the project root.
 | `BACKFILL_SETTLE_SECONDS` | no | Wait after each backfill scroll. Defaults to `1.0`. |
 | `BRIDGE_NAME` | no | Label rendered in Slack context. |
 | `IGNORE_BOTS` | no | Defaults to `true`; skips bot/webhook authors. |
+| `IGNORE_AUTHOR_KEYWORDS` | no | Comma-separated author-name substrings to ignore, e.g. `Boundera`. |
 | `MATCH_KEYWORDS` | no | Comma-separated case-insensitive substrings. |
 | `MATCH_REGEX` | no | Case-insensitive Python regex. |
 | `LLM_API_KEY` | no | Reserved for later LLM-based criteria. |
@@ -66,14 +68,16 @@ channel URL. Log into Discord there. The session persists under
 Filtering runs in this order:
 
 1. Drop bot/webhook authors when `IGNORE_BOTS=true`.
-2. Apply guild allowlist if `DISCORD_GUILD_IDS` is set.
-3. Apply channel allowlist if `DISCORD_CHANNEL_IDS` is set.
-4. If no content filters are configured, forward the message.
-5. Otherwise, forward when any keyword or the regex matches message text or
-   attachment filenames.
+2. Drop author names matching `IGNORE_AUTHOR_KEYWORDS`.
+3. Apply guild allowlist if `DISCORD_GUILD_IDS` is set.
+4. Apply channel allowlist if `DISCORD_CHANNEL_IDS` is set.
+5. Apply keyword/regex content prefilters to message text and attachment
+   filenames.
+6. Forward to matches Slack only when product intent is strong enough.
 
 Future business criteria should go in
-`discord_slack_listener/criteria.py:should_forward_message`.
+`discord_slack_listener/criteria.py:should_forward_message` or
+`discord_slack_listener/lead_intent.py`.
 
 ## SQLite
 
@@ -105,6 +109,11 @@ Run supervised mode with:
 The supervisor starts the browser listener only during `ACTIVE_START_HOUR` to
 `ACTIVE_END_HOUR`. Outside that window, it terminates the child process and
 sleeps until the next active start.
+
+The supervisor also checks the current git branch's upstream every
+`GIT_UPDATE_POLL_SECONDS`. When the checkout is behind, it runs
+`git pull --ff-only`, installs `requirements.txt` if that file changed, posts
+an ops Slack notification, and restarts the listener child.
 
 On startup, supervised mode prompts for catch-up backfill. If `yes` is not
 entered within 5 seconds, it defaults to no and launches the supervisor. Catch-up

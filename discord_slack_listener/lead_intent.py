@@ -19,6 +19,10 @@ class LeadIntent:
         return self.score >= 4
 
     @property
+    def should_notify(self) -> bool:
+        return self.score >= 6
+
+    @property
     def summary(self) -> str:
         if self.level == "none":
             return "none"

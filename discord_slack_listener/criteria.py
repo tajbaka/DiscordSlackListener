@@ -25,6 +25,11 @@ def should_forward_message(
     if settings.ignore_bots and message.author_is_bot:
         return CriteriaDecision(False, "ignored bot/webhook author")
 
+    author_name = message.author_name.lower()
+    for keyword in settings.ignore_author_keywords:
+        if keyword.lower() in author_name:
+            return CriteriaDecision(False, f"ignored author keyword: {keyword}")
+
     if settings.discord_guild_ids and message.guild_id not in settings.discord_guild_ids:
         return CriteriaDecision(False, "guild not allowed")
 
