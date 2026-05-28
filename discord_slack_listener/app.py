@@ -16,7 +16,9 @@ from playwright.sync_api import Page
 from playwright.sync_api import sync_playwright
 
 from discord_slack_listener.browser_dom import (
+    EXTRACT_DM_CONVERSATIONS_SCRIPT,
     EXTRACT_MESSAGES_SCRIPT,
+    dm_conversation_from_browser_payload,
     message_from_browser_payload,
 )
 from discord_slack_listener.conf import ROOT_DIR, Settings, load_settings
@@ -59,6 +61,15 @@ def run_browser_listener(settings: Settings) -> None:
         logger.info("Opened Discord channel: %s", settings.discord_channel_url)
         logger.info("If Discord asks you to log in, complete login in the browser window.")
 
+        dm_page: Page | None = None
+        seen_unread_dm_ids: set[str] = set()
+        dm_first_scan = True
+        dm_extraction_failures = 0
+        if settings.discord_dm_listener_enabled:
+            dm_page = context.new_page()
+            dm_page.goto(settings.discord_dm_url, wait_until="domcontentloaded")
+            logger.info("Opened Discord DM listener tab: %s", settings.discord_dm_url)
+
         try:
             page.wait_for_selector('li[id^="chat-messages-"]', timeout=60_000)
         except PlaywrightTimeoutError:
@@ -74,6 +85,18 @@ def run_browser_listener(settings: Settings) -> None:
                     "the session may be challenged, or the channel may be inaccessible."
                 ),
             )
+        if dm_page is not None:
+            try:
+                dm_page.wait_for_selector(
+                    'a[href^="/channels/@me/"], a[href^="https://discord.com/channels/@me/"]',
+                    timeout=60_000,
+                )
+            except PlaywrightTimeoutError:
+                logger.warning(
+                    "No Discord DM rows found yet. This can mean there are no visible "
+                    "DM conversations, the browser is logged out, or the Discord home/DM "
+                    "view has not loaded."
+                )
 
         first_scan = True
         while True:
@@ -92,6 +115,26 @@ def run_browser_listener(settings: Settings) -> None:
                 time.sleep(settings.poll_interval_seconds)
                 continue
 
+            dm_conversations = []
+            dm_extraction_succeeded = dm_page is None
+            if dm_page is not None:
+                try:
+                    dm_conversations = [
+                        dm_conversation_from_browser_payload(payload)
+                        for payload in extract_dm_conversation_payloads(dm_page)
+                    ]
+                    dm_extraction_failures = 0
+                    dm_extraction_succeeded = True
+                except Exception as exc:
+                    dm_extraction_failures += 1
+                    logger.exception("Failed to extract Discord DM rows from DOM")
+                    if dm_extraction_failures == 1 or dm_extraction_failures % 12 == 0:
+                        slack.notify_error(
+                            "listener:dm-extract",
+                            exc,
+                            context={"consecutive_failures": dm_extraction_failures},
+                        )
+
             if first_scan:
                 for payload in payloads:
                     message = message_from_browser_payload(payload, settings)
@@ -103,8 +146,25 @@ def run_browser_listener(settings: Settings) -> None:
                     len(seen_message_ids),
                 )
                 first_scan = False
+                if dm_first_scan and dm_extraction_succeeded:
+                    seen_unread_dm_ids = seed_dm_conversations(store, dm_conversations)
+                    logger.info(
+                        "Seeded %d Discord DM conversations; %d are currently unread",
+                        len(dm_conversations),
+                        len(seen_unread_dm_ids),
+                    )
+                    dm_first_scan = False
                 time.sleep(settings.poll_interval_seconds)
                 continue
+
+            if dm_first_scan and dm_extraction_succeeded:
+                seen_unread_dm_ids = seed_dm_conversations(store, dm_conversations)
+                logger.info(
+                    "Seeded %d Discord DM conversations; %d are currently unread",
+                    len(dm_conversations),
+                    len(seen_unread_dm_ids),
+                )
+                dm_first_scan = False
 
             for payload in payloads:
                 message = message_from_browser_payload(payload, settings)
@@ -169,6 +229,14 @@ def run_browser_listener(settings: Settings) -> None:
                     lead_intent=lead_intent,
                 )
                 store.mark_forwarded(message.id, reason)
+
+            if dm_page is not None and dm_extraction_succeeded:
+                seen_unread_dm_ids = notify_new_unread_dms(
+                    conversations=dm_conversations,
+                    store=store,
+                    slack=slack,
+                    previous_unread_ids=seen_unread_dm_ids,
+                )
 
             if settings.no_message_alert_seconds > 0:
                 now = datetime.now(timezone.utc)
@@ -592,6 +660,48 @@ def _matches_repo_process(proc: psutil.Process, *, required: str) -> bool:
 def extract_payloads(page: Page) -> list[dict]:
     payloads = page.evaluate(EXTRACT_MESSAGES_SCRIPT)
     return payloads if isinstance(payloads, list) else []
+
+
+def extract_dm_conversation_payloads(page: Page) -> list[dict]:
+    payloads = page.evaluate(EXTRACT_DM_CONVERSATIONS_SCRIPT)
+    return payloads if isinstance(payloads, list) else []
+
+
+def seed_dm_conversations(
+    store: MessageStore,
+    conversations,
+) -> set[str]:
+    unread_ids: set[str] = set()
+    for conversation in conversations:
+        store.upsert_dm_conversation(conversation)
+        if conversation.unread:
+            unread_ids.add(conversation.id)
+    return unread_ids
+
+
+def notify_new_unread_dms(
+    *,
+    conversations,
+    store: MessageStore,
+    slack: SlackNotifier,
+    previous_unread_ids: set[str],
+) -> set[str]:
+    current_unread_ids: set[str] = set()
+    for conversation in conversations:
+        store.upsert_dm_conversation(conversation)
+        if not conversation.unread:
+            continue
+        current_unread_ids.add(conversation.id)
+        if conversation.id in previous_unread_ids:
+            continue
+        logger.info(
+            "Discord DM conversation %s became unread: %s",
+            conversation.id,
+            conversation.recipient_name,
+        )
+        slack.notify_dm_unread(conversation)
+        store.mark_dm_alerted(conversation.id)
+    return current_unread_ids
 
 
 def classify_message_with_context(

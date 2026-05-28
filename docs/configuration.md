@@ -7,8 +7,11 @@ Configuration is loaded from `.env` at the project root.
 | `DISCORD_CHANNEL_URL` | yes | Discord web channel URL to open. |
 | `SLACK_WEBHOOK_URL` | yes | Ops Slack webhook for errors, restarts, and health alerts. |
 | `SLACK_MATCHES_WEBHOOK_URL` | yes | Slack webhook for matched Discord messages. Falls back to `SLACK_REPLIES_WEBHOOK_URL` if set. |
+| `SLACK_DM_WEBHOOK_URL` | no | Slack webhook for unread Discord DM alerts. Falls back to `SLACK_WEBHOOK_URL`. |
 | `DISCORD_GUILD_IDS` | no | Comma-separated guild/server IDs to allow and build URL. |
 | `DISCORD_CHANNEL_IDS` | no | Comma-separated channel IDs to allow and build URL. |
+| `DISCORD_DM_LISTENER_ENABLED` | no | Opens a second Discord tab for DM unread alerts. Defaults to `true`. |
+| `DISCORD_DM_URL` | no | Discord DM/home URL to open. Defaults to `https://discord.com/channels/@me`. |
 | `BROWSER_PROFILE_DIR` | no | Persistent Chromium profile path. |
 | `DATABASE_PATH` | no | SQLite database path. Defaults to `data/messages.sqlite3`. |
 | `BROWSER_HEADLESS` | no | Defaults to `false`; keep false for interactive login. |
@@ -88,15 +91,25 @@ never posts to Slack.
 
 ## Slack Routing
 
-Use two incoming webhooks:
+Use two or three incoming webhooks:
 
 - `SLACK_WEBHOOK_URL`: ops channel for crashes, browser/session trouble,
   supervised restarts, and stale-listener alerts.
 - `SLACK_MATCHES_WEBHOOK_URL`: lead/match channel for Discord messages that
   meet the forwarding criteria.
+- `SLACK_DM_WEBHOOK_URL`: unread DM alerts. If unset, DM alerts use
+  `SLACK_WEBHOOK_URL`.
 
 The listener also accepts OpenOutreach-style `SLACK_REPLIES_WEBHOOK_URL` as a
 fallback for `SLACK_MATCHES_WEBHOOK_URL`.
+
+## DM Listener
+
+The live listener opens a second Chromium tab at `DISCORD_DM_URL`, defaulting
+to `https://discord.com/channels/@me`. On startup it stores the current DM
+state without notifying. After that, it posts to Slack when a DM conversation
+transitions from read to unread, then stays quiet for that conversation until
+the unread state clears and reappears.
 
 ## Supervisor And Catch-Up
 

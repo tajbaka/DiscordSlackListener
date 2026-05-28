@@ -15,15 +15,23 @@ Playwright persistent Chromium profile
   -> should_forward_message()
   -> SlackNotifier.post_message()
   -> Slack incoming webhook
+
+Playwright persistent Chromium profile
+  -> Discord DM/home tab
+  -> EXTRACT_DM_CONVERSATIONS_SCRIPT
+  -> MessageStore.upsert_dm_conversation()
+  -> SlackNotifier.notify_dm_unread()
+  -> Slack incoming webhook
 ```
 
 ## Modules
 
-- `app.py` owns the Playwright browser lifecycle, page polling, and dedupe.
+- `app.py` owns the Playwright browser lifecycle, page polling, and dedupe for
+  both the channel tab and DM tab.
 - `browser_dom.py` extracts Discord message rows from the live DOM and converts
   them into normalized dataclasses.
-- `store.py` persists messages in SQLite, idempotent on Discord message ID,
-  tracks forwarded state, and exposes recent same-author/channel context.
+- `store.py` persists messages and DM conversation state in SQLite, tracks
+  forwarded state, and exposes recent same-author/channel context.
 - `lead_intent.py` scores whether a message looks like interest in a
   FedRAMP software product using the current message plus recent context.
 - `models.py` contains Discord-message dataclasses used by the rest of the app.

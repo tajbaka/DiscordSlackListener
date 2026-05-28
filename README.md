@@ -16,8 +16,9 @@ messages.
 6. Scores FedRAMP product/tool interest using the message plus recent context.
 7. Dedupes Slack notifications by stored forwarded state.
 8. Applies criteria from `discord_slack_listener/criteria.py`.
-9. Posts matching new messages to a matches Slack webhook.
-10. Posts listener errors, restarts, and stale-session health alerts to ops Slack.
+9. Opens a separate Discord DM tab and alerts Slack when a DM becomes unread.
+10. Posts matching new channel messages to a matches Slack webhook.
+11. Posts listener errors, restarts, and stale-session health alerts to ops Slack.
 
 The criteria layer uses channel/guild allowlists and keyword/regex prefilters,
 then requires strong FedRAMP-product intent before posting to the matches
@@ -37,9 +38,15 @@ Fill in:
 
 - `SLACK_WEBHOOK_URL` for ops/errors/health
 - `SLACK_MATCHES_WEBHOOK_URL` for matched Discord messages
+- optionally `SLACK_DM_WEBHOOK_URL` for unread DM alerts; it falls back to ops
 - `DISCORD_CHANNEL_URL`, or `DISCORD_GUILD_IDS` + `DISCORD_CHANNEL_IDS`
 - optionally `MATCH_KEYWORDS`, `MATCH_REGEX`
 - optionally `IGNORE_AUTHOR_KEYWORDS=Boundera` to suppress internal replies
+
+The DM listener is enabled by default. It opens
+`https://discord.com/channels/@me` in a second tab and posts a Slack alert when
+a conversation transitions to unread. Set `DISCORD_DM_LISTENER_ENABLED=false`
+to disable it.
 
 On first run, log into Discord in the opened Chromium window. The session is
 stored in `BROWSER_PROFILE_DIR`.

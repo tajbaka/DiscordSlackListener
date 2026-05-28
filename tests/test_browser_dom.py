@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from discord_slack_listener.browser_dom import message_from_browser_payload
+from discord_slack_listener.browser_dom import (
+    dm_conversation_from_browser_payload,
+    message_from_browser_payload,
+)
 from discord_slack_listener.conf import Settings
 
 
@@ -11,9 +14,12 @@ def settings() -> Settings:
         discord_channel_url="https://discord.com/channels/579151027169918986/885567780924043334",
         slack_webhook_url="https://hooks.slack.test/abc",
         slack_matches_webhook_url="https://hooks.slack.test/matches",
+        slack_dm_webhook_url="https://hooks.slack.test/dms",
         bridge_name="test-bridge",
         discord_guild_ids=frozenset({579151027169918986}),
         discord_channel_ids=frozenset({885567780924043334}),
+        discord_dm_listener_enabled=True,
+        discord_dm_url="https://discord.com/channels/@me",
         browser_profile_dir=Path("data/discord-profile"),
         database_path=Path("data/messages.sqlite3"),
         browser_headless=False,
@@ -62,3 +68,18 @@ def test_message_from_browser_payload_builds_jump_url_and_links() -> None:
     assert msg.author_key == "discord_user:1114932911578300416"
     assert msg.jump_url.endswith("/885567780924043334/1507550930504257536")
     assert msg.attachments[0].url == "https://example.test"
+
+
+def test_dm_conversation_from_browser_payload_builds_jump_url() -> None:
+    conversation = dm_conversation_from_browser_payload(
+        {
+            "id": "123456789",
+            "recipient_name": "Jane",
+            "unread": True,
+        },
+    )
+
+    assert conversation.id == "123456789"
+    assert conversation.recipient_name == "Jane"
+    assert conversation.unread is True
+    assert conversation.jump_url == "https://discord.com/channels/@me/123456789"

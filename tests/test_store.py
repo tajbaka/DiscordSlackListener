@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from discord_slack_listener.models import DiscordAttachment, DiscordMessage
+from discord_slack_listener.models import (
+    DiscordAttachment,
+    DiscordDirectMessageConversation,
+    DiscordMessage,
+)
 from discord_slack_listener.store import MessageStore
 
 
@@ -44,6 +48,29 @@ def test_store_tracks_forwarded_state(tmp_path) -> None:
     store.mark_forwarded("42", "matched keyword: FedRAMP")
 
     assert store.has_been_forwarded("42") is True
+
+
+def test_store_tracks_dm_conversation_unread_state(tmp_path) -> None:
+    store = MessageStore(tmp_path / "messages.sqlite3")
+    unread = DiscordDirectMessageConversation(
+        id="dm-1",
+        recipient_name="Jane",
+        unread=True,
+        jump_url="https://discord.com/channels/@me/dm-1",
+    )
+    read = DiscordDirectMessageConversation(
+        id="dm-1",
+        recipient_name="Jane",
+        unread=False,
+        jump_url="https://discord.com/channels/@me/dm-1",
+    )
+
+    first = store.upsert_dm_conversation(unread)
+    second = store.upsert_dm_conversation(read)
+
+    assert first.created is True
+    assert second.created is False
+    assert second.changed is True
 
 
 def test_store_seeds_eddy_slack_notification_exclusion(tmp_path) -> None:

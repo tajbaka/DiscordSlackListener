@@ -39,9 +39,12 @@ class Settings:
     discord_channel_url: str
     slack_webhook_url: str
     slack_matches_webhook_url: str
+    slack_dm_webhook_url: str
     bridge_name: str
     discord_guild_ids: frozenset[int]
     discord_channel_ids: frozenset[int]
+    discord_dm_listener_enabled: bool
+    discord_dm_url: str
     browser_profile_dir: Path
     database_path: Path
     browser_headless: bool
@@ -90,10 +93,23 @@ def load_settings() -> Settings:
             os.getenv("SLACK_MATCHES_WEBHOOK_URL", "").strip()
             or os.getenv("SLACK_REPLIES_WEBHOOK_URL", "").strip()
         ),
+        slack_dm_webhook_url=(
+            os.getenv("SLACK_DM_WEBHOOK_URL", "").strip()
+            or os.getenv("SLACK_WEBHOOK_URL", "").strip()
+        ),
         bridge_name=os.getenv("BRIDGE_NAME", "discord-slack-listener").strip()
         or "discord-slack-listener",
         discord_guild_ids=guild_ids,
         discord_channel_ids=channel_ids,
+        discord_dm_listener_enabled=_truthy(
+            os.getenv("DISCORD_DM_LISTENER_ENABLED"),
+            default=True,
+        ),
+        discord_dm_url=os.getenv(
+            "DISCORD_DM_URL",
+            "https://discord.com/channels/@me",
+        ).strip()
+        or "https://discord.com/channels/@me",
         browser_profile_dir=Path(
             os.getenv("BROWSER_PROFILE_DIR", "data/discord-profile").strip()
         ),

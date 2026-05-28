@@ -45,3 +45,11 @@ class DiscordMessage:
         if len(text) > 900:
             return text[:897] + "..."
         return text
+
+
+@dataclass(frozen=True)
+class DiscordDirectMessageConversation:
+    id: str
+    recipient_name: str
+    unread: bool
+    jump_url: str

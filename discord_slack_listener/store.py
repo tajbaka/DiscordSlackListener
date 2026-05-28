@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from discord_slack_listener.models import DiscordDirectMessageConversation
 from discord_slack_listener.models import DiscordMessage
 from discord_slack_listener.models import DiscordAttachment
 from discord_slack_listener.lead_intent import LeadIntent
@@ -69,6 +70,20 @@ class MessageStore:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS discord_dm_conversations (
+                id TEXT PRIMARY KEY,
+                recipient_name TEXT NOT NULL,
+                unread INTEGER NOT NULL,
+                jump_url TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                last_unread_at TEXT,
+                last_alerted_at TEXT
+            )
+            """
+        )
         self._ensure_column("discord_messages", "lead_intent_level", "TEXT")
         self._ensure_column("discord_messages", "author_key", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("discord_messages", "lead_intent_score", "INTEGER")
@@ -98,6 +113,10 @@ class MessageStore:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_slack_notification_exclusions_author_name "
             "ON slack_notification_exclusions(author_name, active)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_discord_dm_conversations_unread "
+            "ON discord_dm_conversations(unread, last_seen_at)"
         )
         self._ensure_default_slack_notification_exclusions()
         self.conn.commit()
@@ -235,6 +254,76 @@ class MessageStore:
             (message_id,),
         ).fetchone()
         return bool(row and row["forwarded_at"])
+
+    def upsert_dm_conversation(
+        self,
+        conversation: DiscordDirectMessageConversation,
+    ) -> UpsertResult:
+        now = _utc_now()
+        existing = self.conn.execute(
+            """
+            SELECT recipient_name, unread, jump_url
+            FROM discord_dm_conversations
+            WHERE id = ?
+            """,
+            (conversation.id,),
+        ).fetchone()
+        if existing is None:
+            self.conn.execute(
+                """
+                INSERT INTO discord_dm_conversations (
+                    id, recipient_name, unread, jump_url,
+                    first_seen_at, last_seen_at, last_unread_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation.id,
+                    conversation.recipient_name,
+                    int(conversation.unread),
+                    conversation.jump_url,
+                    now,
+                    now,
+                    now if conversation.unread else None,
+                ),
+            )
+            self.conn.commit()
+            return UpsertResult(created=True, changed=True)
+
+        changed = (
+            existing["recipient_name"] != conversation.recipient_name
+            or bool(existing["unread"]) != conversation.unread
+            or existing["jump_url"] != conversation.jump_url
+        )
+        self.conn.execute(
+            """
+            UPDATE discord_dm_conversations
+            SET recipient_name = ?, unread = ?, jump_url = ?, last_seen_at = ?,
+                last_unread_at = CASE WHEN ? THEN ? ELSE last_unread_at END
+            WHERE id = ?
+            """,
+            (
+                conversation.recipient_name,
+                int(conversation.unread),
+                conversation.jump_url,
+                now,
+                int(conversation.unread),
+                now,
+                conversation.id,
+            ),
+        )
+        self.conn.commit()
+        return UpsertResult(created=False, changed=changed)
+
+    def mark_dm_alerted(self, conversation_id: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE discord_dm_conversations
+            SET last_alerted_at = ?
+            WHERE id = ?
+            """,
+            (_utc_now(), conversation_id),
+        )
+        self.conn.commit()
 
     def add_slack_notification_exclusion(
         self,

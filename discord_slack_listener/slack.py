@@ -10,6 +10,7 @@ from urllib.error import URLError
 
 from discord_slack_listener.conf import Settings
 from discord_slack_listener.lead_intent import LeadIntent
+from discord_slack_listener.models import DiscordDirectMessageConversation
 from discord_slack_listener.models import DiscordMessage
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,24 @@ class SlackNotifier:
             detail=detail,
         )
         _post_to_slack(self.settings.slack_webhook_url, payload, f"degraded ({title})")
+
+    def notify_dm_unread(self, conversation: DiscordDirectMessageConversation) -> None:
+        if not self.settings.slack_dm_webhook_url:
+            logger.info(
+                "Slack DM webhook unset; unread Discord DM %s not posted",
+                conversation.id,
+            )
+            return
+
+        payload = build_dm_alert_payload(
+            conversation,
+            bridge_name=self.settings.bridge_name,
+        )
+        _post_to_slack(
+            self.settings.slack_dm_webhook_url,
+            payload,
+            f"dm ({conversation.id})",
+        )
 
     def notify_error(
         self,
@@ -191,6 +210,43 @@ def build_degraded_payload(*, bridge_name: str, title: str, detail: str) -> dict
             "elements": [{"type": "mrkdwn", "text": f"*Bridge:* {bridge}"}],
         },
     ]
+    return {"text": fallback, "blocks": blocks}
+
+
+def build_dm_alert_payload(
+    conversation: DiscordDirectMessageConversation,
+    *,
+    bridge_name: str,
+) -> dict:
+    bridge = _escape_mrkdwn(bridge_name)
+    recipient = _escape_mrkdwn(conversation.recipient_name)
+    fallback = f"Discord DM from {conversation.recipient_name}"
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f":envelope_with_arrow: *Unread Discord DM from {recipient}*",
+            },
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"*Bridge:* {bridge}"}],
+        },
+    ]
+
+    if conversation.jump_url:
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Open Discord DM"},
+                    "url": conversation.jump_url,
+                },
+            ],
+        })
+
     return {"text": fallback, "blocks": blocks}
 
 

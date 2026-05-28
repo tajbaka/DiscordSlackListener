@@ -4,7 +4,11 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from discord_slack_listener.conf import Settings
-from discord_slack_listener.models import DiscordAttachment, DiscordMessage
+from discord_slack_listener.models import (
+    DiscordAttachment,
+    DiscordDirectMessageConversation,
+    DiscordMessage,
+)
 
 
 EXTRACT_MESSAGES_SCRIPT = """
@@ -61,6 +65,67 @@ EXTRACT_MESSAGES_SCRIPT = """
       links,
     };
   }).filter((msg) => msg && msg.id && (msg.content || msg.links.length));
+}
+"""
+
+EXTRACT_DM_CONVERSATIONS_SCRIPT = """
+() => {
+  const anchors = Array.from(document.querySelectorAll(
+    'a[href^="/channels/@me/"], a[href^="https://discord.com/channels/@me/"]'
+  ));
+  const seen = new Set();
+  return anchors.map((anchor) => {
+    const href = anchor.getAttribute('href') || '';
+    const match = href.match(/\\/channels\\/@me\\/(\\d+)/);
+    if (!match) return null;
+
+    const id = match[1];
+    if (seen.has(id)) return null;
+    seen.add(id);
+
+    const root = anchor.closest('li, [role="listitem"], [class*="channel_"], [class*="privateChannel"]') || anchor;
+    const textBlob = [
+      anchor.innerText || '',
+      anchor.getAttribute('aria-label') || '',
+      anchor.getAttribute('title') || '',
+      root.innerText || '',
+      root.getAttribute('aria-label') || '',
+      root.getAttribute('title') || '',
+    ].join(' ');
+    const nameCandidates = [
+      anchor.querySelector('[data-text]')?.getAttribute('data-text') || '',
+      anchor.getAttribute('aria-label') || '',
+      anchor.getAttribute('title') || '',
+      anchor.innerText || '',
+      root.getAttribute('aria-label') || '',
+      root.innerText || '',
+    ];
+    let recipientName = (
+      nameCandidates.find((value) => value && value.trim()) || 'Direct message'
+    ).replace(/\\s+/g, ' ').trim();
+    recipientName = recipientName
+      .replace(/\\b\\d+\\s+new messages?\\b/ig, '')
+      .replace(/\\bunread\\b/ig, '')
+      .replace(/\\s+/g, ' ')
+      .trim() || 'Direct message';
+
+    const unreadMarker = root.querySelector(
+      '[class*="unread"], [aria-label*="unread" i], [aria-label*="new message" i], ' +
+      '[class*="numberBadge"], [class*="mentionsBadge"]'
+    );
+    const unread = Boolean(
+      unreadMarker ||
+      /\\bunread\\b/i.test(textBlob) ||
+      /\\bnew messages?\\b/i.test(textBlob)
+    );
+
+    return {
+      id,
+      recipient_name: recipientName,
+      unread,
+      jump_url: `https://discord.com/channels/@me/${id}`,
+    };
+  }).filter(Boolean);
 }
 """
 
@@ -137,4 +202,19 @@ def message_from_browser_payload(
             for link in payload.get("links", [])
             if link.get("url")
         ),
+    )
+
+
+def dm_conversation_from_browser_payload(
+    payload: dict,
+) -> DiscordDirectMessageConversation:
+    conversation_id = str(payload.get("id") or "")
+    jump_url = str(payload.get("jump_url") or "")
+    if not jump_url and conversation_id:
+        jump_url = f"https://discord.com/channels/@me/{conversation_id}"
+    return DiscordDirectMessageConversation(
+        id=conversation_id,
+        recipient_name=str(payload.get("recipient_name") or "Direct message"),
+        unread=bool(payload.get("unread")),
+        jump_url=jump_url,
     )

@@ -9,3 +9,4 @@ build/
 *.egg-info/
 data/
 temp-outreach-messages.txt
+reply-txts/

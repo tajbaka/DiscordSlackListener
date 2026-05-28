@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from discord_slack_listener.models import DiscordAttachment, DiscordMessage
+from discord_slack_listener.models import (
+    DiscordAttachment,
+    DiscordDirectMessageConversation,
+    DiscordMessage,
+)
 from discord_slack_listener.slack import build_degraded_payload, build_error_payload
-from discord_slack_listener.slack import build_slack_payload
+from discord_slack_listener.slack import build_dm_alert_payload, build_slack_payload
 
 
 def test_build_slack_payload_contains_message_context() -> None:
@@ -49,6 +53,23 @@ def test_build_degraded_payload_contains_bridge_and_detail() -> None:
     rendered = str(payload["blocks"])
     assert "discord-prod" in rendered
     assert "No messages for 3.0 hours." in rendered
+
+
+def test_build_dm_alert_payload_contains_recipient_and_link() -> None:
+    payload = build_dm_alert_payload(
+        DiscordDirectMessageConversation(
+            id="123",
+            recipient_name="Jane <Acme>",
+            unread=True,
+            jump_url="https://discord.com/channels/@me/123",
+        ),
+        bridge_name="test-bridge",
+    )
+
+    rendered = str(payload["blocks"])
+    assert payload["text"] == "Discord DM from Jane <Acme>"
+    assert "Jane &lt;Acme&gt;" in rendered
+    assert "Open Discord DM" in rendered
 
 
 def test_build_error_payload_dedupes_same_exception() -> None:
